@@ -1,3 +1,10 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ *
+*/
+
 var curr_req = false;
 var server_info = false;
 var manifest = false;
@@ -16,7 +23,7 @@ if (!String.prototype.includes) {
 
     if (search instanceof RegExp) {
       throw TypeError('first argument must not be a RegExp');
-    } 
+    }
     if (start === undefined) { start = 0; }
     return this.indexOf(search, start) !== -1;
   };
@@ -52,7 +59,7 @@ function navigate(amount) {
 
         //Find the current tab index.
         const currentIndex = findIndex(allElements, currentNode);
-        
+
         //focus the following element
         if (allElements[currentIndex + amount])
             allElements[currentIndex + amount].focus();
@@ -154,14 +161,14 @@ function Init() {
 
     if (storage.exists('connected_server')) {
         data = storage.get('connected_server')
-        document.querySelector('#baseurl').value = data.baseurl
-        document.querySelector('#auto_connect').checked = data.auto_connect
+        document.querySelector('#baseurl').value = data.baseurl;
+        document.querySelector('#auto_connect').checked = data.auto_connect;
         if (window.performance && window.performance.navigation.type == window.performance.navigation.TYPE_BACK_FORWARD) {
             console.log('Got here using the browser "Back" or "Forward" button, inhibiting auto connect.');
         } else {
             if (data.auto_connect) {
-                console.log("Auto connecting...")
-                handleServerSelect()
+                console.log("Auto connecting...");
+                handleServerSelect();
             }
         }
     }
@@ -172,8 +179,28 @@ function validURL(str) {
     return !!pattern.test(str);
 }
 
+function normalizeUrl(url) {
+    url = url.trimLeft ? url.trimLeft() : url.trimStart();
+    if (url.indexOf("http://") != 0 && url.indexOf("https://") != 0) {
+        // assume http
+        url = "http://" + url;
+    }
+    // normalize multiple slashes as this trips WebOS in some cases
+    var parts = url.split("://");
+    for (var i = 1; i < parts.length; i++) {
+        var part = parts[i];
+        while (true) {
+            var newpart = part.replace("//", "/");
+            if (newpart.length == part.length) break;
+            part = newpart;
+        }
+        parts[i] = part;
+    }
+    return parts.join("://");
+}
+
 function handleServerSelect() {
-    var baseurl = document.querySelector('#baseurl').value;
+    var baseurl = normalizeUrl(document.querySelector('#baseurl').value);
     var auto_connect = document.querySelector('#auto_connect').checked;
 
     if (validURL(baseurl)) {
@@ -215,7 +242,7 @@ function hideConnecting() {
     navigationInit();
 }
 function getServerInfo(baseurl, auto_connect) {
-    curr_req = ajax.request(baseurl + "/System/Info/Public", {
+    curr_req = ajax.request(normalizeUrl(baseurl + "/System/Info/Public"), {
         method: "GET",
         success: function (data) {
             handleSuccessServerInfo(data, baseurl, auto_connect);
@@ -227,7 +254,7 @@ function getServerInfo(baseurl, auto_connect) {
 }
 
 function getManifest(baseurl) {
-    curr_req = ajax.request(baseurl + "/web/manifest.json", {
+    curr_req = ajax.request(normalizeUrl(baseurl + "/web/manifest.json"), {
         method: "GET",
         success: function (data) {
             handleSuccessManifest(data, baseurl);
@@ -260,9 +287,9 @@ function handleSuccessServerInfo(data, baseurl, auto_connect) {
 
 function handleSuccessManifest(data, baseurl) {
     if(data.start_url.includes("/web")){
-        var hosturl = baseurl + "/" + data.start_url;
+        var hosturl = normalizeUrl(baseurl + "/" + data.start_url);
     } else {
-        var hosturl = baseurl + "/web/" + data.start_url;
+        var hosturl = normalizeUrl(baseurl + "/web/" + data.start_url);
     }
 
     curr_req = false;
@@ -273,9 +300,10 @@ function handleSuccessManifest(data, baseurl) {
     storage.set('connected_server', info)
     console.log(info);
 
-    getTextToInject().then(function (bundle) {
+    // avoid Promise as it's buggy in some WebOS
+    getTextToInject(function (bundle) {
         handoff(hosturl, bundle);
-    }).catch(function (error) {
+    }, function (error) {
         console.error(error);
         displayError(error);
         hideConnecting();
@@ -316,42 +344,41 @@ function abort() {
     console.log("Aborting...");
 }
 
-function loadUrl(url) {
-    return new Promise(function (resolve, reject) {
-        var xhr = new XMLHttpRequest();
+function loadUrl(url, success, failure) {
+    var xhr = new XMLHttpRequest();
 
-        xhr.open('GET', url);
+    xhr.open('GET', url);
 
-        xhr.onload = function () {
-            resolve(xhr.responseText);
-        };
+    xhr.onload = function () {
+        success(xhr.responseText);
+    };
 
-        xhr.onerror = function () {
-            reject("Failed to load '" + url + "'");
-        }
+    xhr.onerror = function () {
+        failure("Failed to load '" + url + "'");
+    }
 
-        xhr.send();
-    });
+    xhr.send();
 }
 
-function getTextToInject() {
+function getTextToInject(success, failure) {
     var bundle = {};
 
     var urls = ['js/webOS.js', 'css/webOS.css'];
 
-    var p = Promise.resolve();
-
-    urls.forEach(function (url) {
-        p = p.then(function () {
-            return loadUrl(url);
-        }).then(function (data) {
+    // imitate promises as they're borked in at least WebOS 2
+    var looper = function (idx) {
+        if (idx >= urls.length) {
+            success(bundle);
+        } else {
+            var url = urls[idx];
             var ext = url.split('.').pop();
-            bundle[ext] = (bundle[ext] || '') + data;
-            return bundle;
-        });
-    });
-
-    return p;
+            loadUrl(url, function (data) {
+                bundle[ext] = (bundle[ext] || '') + data;
+                looper(idx + 1);
+            }, failure);
+        }
+    };
+    looper(0);
 }
 
 function injectScriptText(document, text) {
@@ -371,6 +398,7 @@ function handoff(url, bundle) {
     console.log("Handoff called with: ", url)
     //hideConnecting();
 
+    stopDiscovery();
     document.querySelector('.container').style.display = 'none';
 
     var contentFrame = document.querySelector('#contentFrame');
@@ -430,6 +458,7 @@ window.addEventListener('message', function (msg) {
 
     switch (msg.type) {
         case 'selectServer':
+            startDiscovery();
             document.querySelector('.container').style.display = '';
             hideConnecting();
             contentFrame.style.display = 'none';
@@ -440,3 +469,132 @@ window.addEventListener('message', function (msg) {
             break;
     }
 });
+
+/* Server auto-discovery */
+
+var discovered_servers = {};
+
+function renderServerList() {
+    var server_list = document.getElementById("serverlist");
+    for (var server_id in discovered_servers) {
+        var server = discovered_servers[server_id];
+
+        var server_card = document.getElementById("server_" + server.Id);
+
+        if (!server_card) {
+            server_card = document.createElement("li");
+            server_card.id = "server_" + server_id;
+            server_card.className = "server_card";
+            server_list.appendChild(server_card);
+        }
+        server_card.innerHTML = "";
+
+        // Server name
+        var title = document.createElement("div");
+        title.className = "server_card_title";
+        title.innerText = server.Name;
+        server_card.appendChild(title);
+
+        // Server URL
+        var server_url = document.createElement("div");
+        server_url.className = "server_card_url";
+        server_url.innerText = server.Address;
+        server_card.appendChild(server_url);
+
+        // Button
+        var btn = document.createElement("button");
+        btn.innerText = "Connect";
+        btn.type = "button";
+        btn.value = server.Address;
+        btn.onclick = function() {
+            var urlfield = document.getElementById("baseurl");
+            urlfield.value = this.value;
+            handleServerSelect();
+        }
+        server_card.appendChild(btn);
+    }
+}
+
+
+var servers_verifying = {};
+
+function verifyThenAdd(server) {
+    if (servers_verifying[server.Id]) {
+        return;
+    }
+    servers_verifying[server.Id] = server;
+
+    curr_req = ajax.request(normalizeUrl(server.Address + "/System/Info/Public"), {
+        method: "GET",
+        success: function (data) {
+            console.log("success");
+            console.log(server);
+            console.log(data);
+
+            // TODO: Do we want to autodiscover only Jellyfin servers, or anything that responds to "who is JellyfinServer?"
+            if (data.ProductName == "Jellyfin Server") {
+                server.system_info_public = data;
+                if (!discovered_servers[server.Id]) {
+                    discovered_servers[server.Id] = server;
+                    renderServerList();
+                }
+            }
+            servers_verifying[server.Id] = true;
+        },
+        error: function (data) {
+            console.log("error");
+            console.log(server);
+            console.log(data);
+            servers_verifying[server.Id] = false;
+        },
+        abort: function () {
+            console.log("abort");
+            console.log(server);
+            servers_verifying[server.Id] = false;
+        },
+        timeout: 5000
+    });
+}
+
+
+var discover = null;
+
+function startDiscovery() {
+    if (discover) {
+        return;
+    }
+    console.log("Starting server autodiscovery...");
+    discover = webOS.service.request("luna://org.jellyfin.webos.service", {
+        method: "discover",
+        parameters: {
+            uniqueToken: 'fooo'
+        },
+        subscribe: true,
+        resubscribe: true,
+        onSuccess: function (args) {
+            console.log('OK:', JSON.stringify(args));
+
+            if (args.results) {
+                for (var server_id in args.results) {
+                    verifyThenAdd(args.results[server_id]);
+                }
+            }
+        },
+        onFailure: function (args) {
+            console.log('ERR:', JSON.stringify(args));
+        }
+    });
+}
+
+function stopDiscovery() {
+    if (discover) {
+        try {
+            discover.cancel();
+        } catch (err) {
+            console.warn(err);
+        }
+        discover = null;
+    }
+}
+
+startDiscovery();

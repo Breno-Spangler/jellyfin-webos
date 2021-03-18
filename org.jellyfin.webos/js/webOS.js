@@ -1,3 +1,10 @@
+/* 
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ *
+*/
+
 (function(AppInfo) {
     'use strict';
 
@@ -66,7 +73,7 @@
 
             getDeviceProfile: function (profileBuilder) {
                 postMessage('AppHost.getDeviceProfile');
-                return profileBuilder({ enableMkvProgressive: false });
+                return profileBuilder({ enableMkvProgressive: false, enableSsaRender: true });
             },
 
             getSyncProfile: function (profileBuilder) {
